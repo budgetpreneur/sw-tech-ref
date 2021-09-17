@@ -1,0 +1,174 @@
+﻿@page "/registeruser"
+
+@inject LoginApp.Data.PubnubApplicationState appState;
+@using System.Text.RegularExpressions;
+@using System.Globalization;
+
+<h3>Register User</h3>
+
+<table cellpadding="2">
+    <tr>
+        <td>Name</td>
+        <td>:</td>
+        <td><input @bind="userMetadata.Name" maxlength="50" /></td>
+    </tr>
+    <tr>
+        <td>Email</td>
+        <td>:</td>
+        <td><input @bind="userMetadata.Email" maxlength="50" /></td>
+    </tr>
+    <tr>
+        <td>Password</td>
+        <td>:</td>
+        <td><input @bind="userMetadata.Password" type="password" maxlength="50" /> </td>
+    </tr>
+    <tr>
+        <td>Confirm Password</td>
+        <td>:</td>
+        <td><input @bind="userMetadata.ConfirmPassword" type="password" maxlength="50" /> </td>
+    </tr>
+    <tr>
+        <td></td>
+        <td></td>
+        <td><input type="button" @onclick="@HandleRegisterUser" value="Register User" /></td>
+    </tr>
+    <tr>
+        <td colspan="3" align="center">@msg</td>
+    </tr>
+</table>
+<p><a href="/loginuser">Login</a></p>
+
+@code {
+    private bool avail = false;
+    LoginApp.Data.UserMetadata userMetadata = new LoginApp.Data.UserMetadata();
+    private string msg = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        //appState.PNInstance = null;
+        avail = appState.PNInstance != null;
+        //appState.PNInstance = new PubnubApi.Pubnub()
+    }
+
+    void HandleRegisterUser()
+    {
+        msg = string.Empty;
+        if (string.IsNullOrWhiteSpace(userMetadata.Name)
+            || string.IsNullOrWhiteSpace(userMetadata.Email)
+            || string.IsNullOrWhiteSpace(userMetadata.Password)
+            || string.IsNullOrWhiteSpace(userMetadata.ConfirmPassword))
+        {
+            msg = "Fields cannot be empty.";
+            return;
+        }
+
+        if (userMetadata.Password != userMetadata.ConfirmPassword)
+        {
+            msg = "Password and Confirm Password not matching. Please try again.";
+            return;
+        }
+
+        if (!IsValidEmail(userMetadata.Email))
+        {
+            msg = "Invalid Email. Please try again.";
+            return;
+        }
+
+        InvokeAsync(() =>
+        {
+            StateHasChanged();
+        });
+
+        if (appState.PNInstance != null)
+        {
+            if (CheckIfUserExist())
+            {
+                msg = "User already registered";
+                return;
+            }
+            PubnubApi.PNResult<PubnubApi.PNSetUuidMetadataResult> result = appState.PNInstance.SetUuidMetadata()
+                .Uuid(userMetadata.Email)
+                .Email(userMetadata.Email)
+                .Custom(new Dictionary<string, object>() { { "pwd", userMetadata.Password } })
+                .Name(userMetadata.Name)
+                .ExecuteAsync().Result;
+
+            if (result.Result != null)
+            {
+                msg = "Congratulations! User Registerd Successfully.";
+            }
+            else if (result.Status != null && result.Status.Error)
+            {
+                System.Diagnostics.Debug.WriteLine((result.Status.ErrorData != null) ? result.Status.ErrorData.Information : "No error data available");
+                msg = "Oops..something wrong..try again";
+            }
+        }
+        else
+        {
+            msg = "Oops....Pubnub Instance not available. Try again.";
+        }
+
+        InvokeAsync(() =>
+        {
+            StateHasChanged();
+        });
+    }
+
+    bool CheckIfUserExist()
+    {
+        bool userExist = false;
+        PubnubApi.PNResult<PubnubApi.PNGetUuidMetadataResult> result = appState.PNInstance.GetUuidMetadata()
+            .Uuid(userMetadata.Email)
+            .ExecuteAsync().Result;
+
+        if (result.Result != null)
+        {
+            userExist = true;
+        }
+        return userExist;
+    }
+
+    static bool IsValidEmail(string email)
+        {
+            if (string.IsNullOrWhiteSpace(email))
+                return false;
+
+            try
+            {
+                // Normalize the domain
+                email = Regex.Replace(email, @"(@)(.+)$", DomainMapper,
+                                      RegexOptions.None, TimeSpan.FromMilliseconds(200));
+
+                // Examines the domain part of the email and normalizes it.
+                string DomainMapper(Match match)
+                {
+                    // Use IdnMapping class to convert Unicode domain names.
+                    var idn = new IdnMapping();
+
+                    // Pull out and process domain name (throws ArgumentException on invalid)
+                    string domainName = idn.GetAscii(match.Groups[2].Value);
+
+                    return match.Groups[1].Value + domainName;
+                }
+            }
+            catch (RegexMatchTimeoutException e)
+            {
+                return false;
+            }
+            catch (ArgumentException e)
+            {
+                return false;
+            }
+
+            try
+            {
+                return Regex.IsMatch(email,
+                    @"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+                    RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(250));
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                return false;
+            }
+        }
+}

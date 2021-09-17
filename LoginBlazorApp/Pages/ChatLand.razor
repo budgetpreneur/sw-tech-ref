@@ -1,0 +1,297 @@
+﻿@page "/chatland"
+
+@inject LoginApp.Data.PubnubApplicationState appState;
+@inject LoginApp.Data.SessionState state
+@inject NavigationManager uriHelper;
+@using System.Collections.Concurrent;
+@using System.Threading;
+
+<h3>Chat Land (Attendance = @messageDisplay.ParticipantCount)</h3>
+<h4>Hi @state.CurrentUserName (@state.CurrentUserId), Welcome to PubNub Hackathon Chat.</h4>
+
+<div class="scrollbox" style="width:90%; height:360px; overflow:scroll; background-color:lightblue">
+    @for (int index = 0; index < messageDisplay.GetMessageList().Count; index++)
+    {
+        if (messageDisplay.GetMessageList()[index].Notice)
+        {
+            <div style="width:100%; text-align:center; background-color:lightyellow">@messageDisplay.GetMessageList()[index].Message</div>
+        }
+        else if (messageDisplay.GetMessageList()[index].Owner == state.CurrentUserId)
+        {
+            <div style="width:100%; text-align:right; background-color:lightgray; padding-right:5px">@messageDisplay.GetMessageList()[index].Message</div>
+        }
+        else
+        {
+            <div style="width:100%">@messageDisplay.GetMessageList()[index].Message</div>
+        }
+    }
+</div>
+@*<input @bind="publishMsg" @onkeydown="@Enter" @oninput="(EventArgs) => {SetPublishMsg(EventArgs.Value.ToString());}" />*@
+<input @bind="publishMsg" />
+<input type="button" @onclick="@HandleSendMessage" value="Send" /> &nbsp;
+@*<span>...</span> @typingUsers.Count <span> person(s) typing</span> <a href="javascript:void()" @onclick="CheckTypingUsers">Refresh Count</a>*@
+
+<p>@msg</p>
+<input type="button" @onclick="@HandleChatLeave" value="Exit PubnNub Hackathon Chat" />
+
+@code {
+    public List<string> messageList = new List<string>();
+    public ConcurrentDictionary<string, string> typingUsers = new ConcurrentDictionary<string, string>();
+    public System.Threading.Timer typingUsersTimer;
+
+    void CheckTypingUsers()
+    {
+        if (typingUsersTimer == null)
+        {
+            typingUsersTimer = new Timer(new TimerCallback(_ =>
+            {
+                typingUsers.Clear();
+                InvokeAsync(() =>
+                {
+                    StateHasChanged();
+                });
+            }), null, 5000, 5000);
+        }
+    }
+
+    public class MessageAndOwner
+    {
+        public bool Notice { get; set; }
+        public string Owner { get; set; }
+        public string Message { get; set; }
+    }
+
+    public class MessageDisplay
+    {
+        List<MessageAndOwner> msgList = new List<MessageAndOwner>();
+
+        public int ParticipantCount { get; set; }
+
+        public void Add(MessageAndOwner msg)
+        {
+            msgList.Add(msg);
+            NotifyStateChanged();
+        }
+        public void Remove(int index)
+        {
+            msgList.RemoveAt(index);
+            NotifyStateChanged();
+        }
+        public List<MessageAndOwner> GetMessageList()
+        {
+            return msgList;
+        }
+
+        public void SetParticipantCount(int count)
+        {
+            ParticipantCount = count;
+            NotifyStateChanged();
+        }
+
+        public event Action OnChange;
+        private void NotifyStateChanged() => OnChange?.Invoke();
+    }
+
+    public MessageDisplay messageDisplay = new MessageDisplay();
+
+    private string msg = string.Empty;
+    string publishMsg = string.Empty;
+    //Action<string> messageAction =
+    private void SetPublishMsg(string input)
+    {
+        publishMsg = input;
+    }
+
+
+    protected override void OnInitialized()
+    {
+        CheckTypingUsers();
+        HandleChatJoin();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        //base.OnAfterRender(firstRender);
+        string currentUserId = state.CurrentUserId;
+        if (string.IsNullOrWhiteSpace(currentUserId))
+        {
+            uriHelper.NavigateTo("/loginuser");
+        }
+
+    }
+
+    void HandleChatLeave()
+    {
+        msg = "Please wait..";
+
+        //Dictionary<string, object> removeState = new Dictionary<string, object>();
+        //removeState.Add("Name", null);
+        //PubnubApi.PNResult<PubnubApi.PNSetStateResult> result = appState.PNInstance.SetPresenceState()
+        //.Channels(new string[] { "pandudemo-hackathon-chat" })
+        //.State(removeState)
+        //.ExecuteAsync().Result;
+
+        //Task.Delay(50);
+
+        appState.PNInstance.Unsubscribe<string>()
+            .Channels(new string[] { "pandudemo-hackathon-chat" })
+            .Execute();
+
+        Task.Delay(100);
+
+        appState.PNInstance.Destroy();
+
+        uriHelper.NavigateTo("/");
+    }
+
+    void HandleChatJoin()
+    {
+        string currentUserId = state.CurrentUserId;
+        string currentUserName = state.CurrentUserName;
+        if (!string.IsNullOrWhiteSpace(currentUserId))
+        {
+            if (appState.PNInstance != null)
+            {
+                appState.PNInstance.ChangeUUID(currentUserId);
+                Task.Delay(50);
+
+                appState.PNInstance.Unsubscribe<string>()
+                    .Channels(new string[] { "pandudemo-hackathon-chat" })
+                    .Execute();
+
+                Task.Delay(100);
+
+                appState.PNInstance.AddListener(new PubnubApi.SubscribeCallbackExt(
+    delegate (PubnubApi.Pubnub pnObj, PubnubApi.PNMessageResult<object> pubMsg)
+    {
+        //Console.WriteLine(appState.PNInstance.JsonPluggableLibrary.SerializeToJsonString(pubMsg));
+        var channelName = pubMsg.Channel;
+        var channelGroupName = pubMsg.Subscription;
+        long pubTT = pubMsg.Timetoken;
+        var msg = pubMsg.Message;
+        string publisher = pubMsg.Publisher;
+        string strTime = PubnubApi.Pubnub.TranslatePubnubUnixNanoSecondsToDateTime(pubTT).ToString();
+        string whoSentMsg = (publisher == state.CurrentUserId) ? "Me" : string.Format("{0}", publisher);
+        messageDisplay.Add(new MessageAndOwner() { Owner = publisher, Message = string.Format("[{0}][{1}] says: {2}", strTime, whoSentMsg, msg) });
+        InvokeAsync(() =>
+        {
+            StateHasChanged();
+        });
+    },
+    delegate (PubnubApi.Pubnub pnObj, PubnubApi.PNPresenceEventResult presenceEvnt)
+    {
+        //Console.WriteLine(pubnub.JsonPluggableLibrary.SerializeToJsonString(presenceEvnt));
+        var action = presenceEvnt.Event; // Can be join, leave, state-change or timeout
+        var channelName = presenceEvnt.Channel; // The channel for which the message belongs
+        int occupancy = presenceEvnt.Occupancy; // No. of users connected with the channel
+        Dictionary<string, object> pstate = presenceEvnt.State; // User State
+        var channelGroupName = presenceEvnt.Subscription; //  The channel group or wildcard subscription match (if exists)
+        var publishTime = presenceEvnt.Timestamp; // Publish timetoken
+        var timetoken = presenceEvnt.Timetoken;  // Current timetoken
+        var uuid = presenceEvnt.Uuid; // UUIDs of users who are connected with the channel
+        messageDisplay.ParticipantCount = occupancy;
+        if (pstate != null && pstate.ContainsKey("Name") && pstate["Name"] != null)
+        {
+            string actionMsg = string.Empty;
+            if (action == "join") { actionMsg = "Joined"; }
+            else if (action == "leave" || action == "timeout") { actionMsg = "Left"; }
+            if (!string.IsNullOrWhiteSpace(actionMsg))
+            {
+                string strTime = PubnubApi.Pubnub.TranslatePubnubUnixNanoSecondsToDateTime(timetoken).ToString();
+                string whoSentMsg = (uuid == state.CurrentUserId) ? "Me" : string.Format("{0} ({1})", uuid, pstate["Name"]);
+                messageDisplay.Add(new MessageAndOwner() { Notice = true, Owner = uuid, Message = string.Format("[{0}][Info][{1})]: {2}", strTime, whoSentMsg, actionMsg) });
+            }
+        }
+        InvokeAsync(() =>
+        {
+
+            StateHasChanged();
+        });
+    },
+    delegate (PubnubApi.Pubnub pnObj, PubnubApi.PNSignalResult<object> signalMsg)
+    {
+        string publisher = signalMsg.Publisher; //The Publisher
+        typingUsers.AddOrUpdate(publisher, "", (k, v) => "");
+        InvokeAsync(() =>
+        {
+            StateHasChanged();
+        });
+    },
+    delegate (PubnubApi.Pubnub pnObj, PubnubApi.PNObjectEventResult objectEventObj)
+    {
+    },
+    delegate (PubnubApi.Pubnub pnObj, PubnubApi.PNMessageActionEventResult msgActionEvent)
+    {
+    },
+    delegate (PubnubApi.Pubnub pnObj, PubnubApi.PNFileEventResult fileEvent)
+    {
+    },
+    delegate (PubnubApi.Pubnub pnObj, PubnubApi.PNStatus pnStatus)
+    {
+        //Console.WriteLine("{0} {1} {2}", pnStatus.Operation, pnStatus.Category, pnStatus.StatusCode);
+        var affectedChannelGroups = pnStatus.AffectedChannelGroups; // The channel groups affected in the operation, of type array.
+        var affectedChannels = pnStatus.AffectedChannels; // The channels affected in the operation, of type array.
+        var category = pnStatus.Category; //Returns PNConnectedCategory
+        var operation = pnStatus.Operation; //Returns PNSubscribeOperation
+    }
+    ));
+
+                PubnubApi.PNResult<PubnubApi.PNSetStateResult> result = appState.PNInstance.SetPresenceState()
+                    .Channels(new string[] { "pandudemo-hackathon-chat" })
+                .State(new Dictionary<string, object>() { { "Name", currentUserName } })
+                .ExecuteAsync().Result;
+
+                Task.Delay(100);
+
+                appState.PNInstance.Subscribe<string>()
+                .Channels(new string[] { "pandudemo-hackathon-chat" })
+                .WithPresence()
+                .Execute();
+
+            }
+            else
+            {
+                msg = "Oops....Pubnub Instance not available. Try again.";
+            }
+        }
+    }
+
+    static void RefreshMessages()
+    {
+
+        //System.Diagnostics.Debug.WriteLine(messageList.Count);
+    }
+
+    public void Enter(KeyboardEventArgs e)
+    {
+        if (e.Code == "Enter" || e.Code == "NumpadEnter")
+        {
+            HandleSendMessage();
+        }
+        else
+        {
+            PubnubApi.PNResult<PubnubApi.PNPublishResult> result = appState.PNInstance.Signal()
+                .Channel("pandudemo-hackathon-chat")
+                .Message("..")
+                .ExecuteAsync().Result;
+        }
+    }
+
+    void HandleSendMessage()
+    {
+        string msg = publishMsg;
+        PubnubApi.PNResult<PubnubApi.PNPublishResult> result = appState.PNInstance.Publish()
+            .Channel("pandudemo-hackathon-chat")
+            .Message(msg)
+            .Meta(new Dictionary<string, object>() { { "Name", state.CurrentUserName } })
+            .ExecuteAsync().Result;
+        if (result.Result != null && !result.Status.Error)
+        {
+            publishMsg = string.Empty;
+            InvokeAsync(() =>
+            {
+                StateHasChanged();
+            });
+        }
+    }
+}

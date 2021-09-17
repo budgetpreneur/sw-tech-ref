@@ -1,0 +1,94 @@
+﻿@page "/loginuser"
+
+@inject LoginApp.Data.PubnubApplicationState appState;
+@inject LoginApp.Data.SessionState state
+@inject NavigationManager uriHelper;
+
+<h3>User Login</h3>
+
+<table cellpadding="2">
+    <tr>
+        <td>Email</td>
+        <td>:</td>
+        <td><input @bind="userMetadata.Email" /></td>
+    </tr>
+    <tr>
+        <td>Password</td>
+        <td>:</td>
+        <td><input @bind="userMetadata.Password" type="password" @onkeydown="@Enter"/></td>
+    </tr>
+    <tr>
+        <td></td>
+        <td></td>
+        <td><input type="button" @onclick="@HandleLoginUser" value="Login" /></td>
+    </tr>
+    <tr>
+        <td colspan="3" align="center">@msg</td>
+    </tr>
+</table>
+<p><a href="/registeruser">Register</a></p>
+
+@code {
+    LoginApp.Data.UserMetadata userMetadata = new LoginApp.Data.UserMetadata();
+    private string msg = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        //appState.PNInstance = null;
+        //avail = appState.PNInstance != null;
+        //appState.PNInstance = new PubnubApi.Pubnub()
+    }
+
+    public void Enter(KeyboardEventArgs e)
+    {
+        if (e.Code == "Enter" || e.Code == "NumpadEnter")
+        {
+            HandleLoginUser();
+        }
+    }
+
+    void HandleLoginUser()
+    {
+        if (appState.PNInstance != null)
+        {
+            PubnubApi.PNResult<PubnubApi.PNGetUuidMetadataResult> result = appState.PNInstance.GetUuidMetadata()
+                .Uuid(userMetadata.Email)
+                .IncludeCustom(true)
+                .ExecuteAsync().Result;
+
+            if (result.Result != null)
+            {
+                PubnubApi.PNGetUuidMetadataResult userDetail = result.Result;
+                Dictionary<string, object> userCustomData = userDetail.Custom;
+                if (userCustomData != null && userCustomData.ContainsKey("pwd") && userCustomData["pwd"] != null)
+                {
+                    if (userCustomData["pwd"].ToString() == userMetadata.Password)
+                    {
+                        msg = "Login Success.";
+                        state.CurrentUserId = userDetail.Email;
+                        state.CurrentUserName = userDetail.Name;
+                        uriHelper.NavigateTo("/chatland");
+                    }
+                    else
+                    {
+                        msg = "Login Failed.";
+                    }
+                }
+                else
+                {
+                    msg = "Login Failed.";
+                }
+
+            }
+            else if (result.Status != null && result.Status.Error)
+            {
+                System.Diagnostics.Debug.WriteLine((result.Status.ErrorData != null) ? result.Status.ErrorData.Information : "No error data available");
+                msg = "Oops..something wrong..try again";
+            }
+        }
+        else
+        {
+            msg = "Oops....Pubnub Instance not available. Try again.";
+        }
+    }
+}

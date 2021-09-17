@@ -1,0 +1,160 @@
+﻿@page "/listusers"
+@using Microsoft.AspNetCore.WebUtilities
+@inject LoginApp.Data.PubnubApplicationState appState;
+@inject LoginApp.Data.SessionState state
+@inject NavigationManager NavManager
+
+
+<h3>Users List</h3>
+@if (userList == null)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <p>Total Count = @userList.Count</p>
+    <table class="table">
+        <thead>
+            <tr>
+                <td>User ID</td>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Last Updated</th>
+                <td></td>
+            </tr>
+        </thead>
+        <tbody>
+            @for (int index = 0; index < userList.Count; index++)
+            {
+                string row_bgcolor = index % 2 == 0 ? "lightgrey" : "darkgray";
+                Data.UserMetadata user = userList[index];
+                <tr style="background-color:@row_bgcolor">
+                    <td>@user.UserId</td>
+                    <td>
+                        @if (state.CurrentUserId == user.UserId || state.CurrentUserId == "pandu@pubnub.com")
+                        {
+                            <input @bind="user.Name" />
+                        }
+                        else
+                        {
+                            @user.Name;
+                        }
+                    </td>
+                    <td>@user.Email</td>
+                    <td>@user.LastUpdated</td>
+                    <td>
+                        @if (state.CurrentUserId == user.UserId || state.CurrentUserId == "admin@uuid.com")
+                        {
+                            <button @onclick="() => HandleUpdateUser(user)">Update</button>
+                        }
+                        @if (state.CurrentUserId == "admin@uuid.com")
+                        {
+                            <button @onclick="() => HandleDeleteUser(user)">Delete</button>
+                        }
+                    </td>
+                </tr>
+            }
+            <tr>
+                <td colspan="5" align="center">@msg</td>
+            </tr>
+        </tbody>
+    </table>
+}
+
+@code {
+    List<LoginApp.Data.UserMetadata> userList = new List<Data.UserMetadata>();
+    private string msg = string.Empty;
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        //var uri = NavManager.ToAbsoluteUri(NavManager.Uri);
+        //if (QueryHelpers.ParseQuery(uri.Query).TryGetValue("admincode", out var adminCode))
+        //{
+        //    if (!string.IsNullOrWhiteSpace(adminCode) && adminCode == "pandu_demo_admin_for_this_hackathon.")
+        //    {
+        //        authorizedAdmin = true;
+        //    }
+        //}
+        await LoadAllUsers();
+    }
+
+    async Task LoadAllUsers()
+    {
+        msg = string.Empty;
+        userList.Clear();
+        PubnubApi.PNPageObject pageObject = null;
+        PubnubApi.PNResult<PubnubApi.PNGetAllUuidMetadataResult> result = await appState.PNInstance.GetAllUuidMetadata()
+            .IncludeCount(true)
+            .IncludeCustom(true)
+            .Page(pageObject)
+            .ExecuteAsync();
+        if (result.Result != null)
+        {
+            PubnubApi.PNGetAllUuidMetadataResult usersMetadata = result.Result;
+            if (usersMetadata.Uuids != null)
+            {
+                pageObject = usersMetadata.Page;
+                foreach (var uuid in usersMetadata.Uuids)
+                {
+                    userList.Add(new Data.UserMetadata() { UserId = uuid.Uuid, Email = uuid.Email, Name = uuid.Name, LastUpdated = uuid.Updated });
+                }
+            }
+
+        }
+    }
+
+    async Task HandleDeleteUser(Data.UserMetadata user)
+    {
+        msg = string.Empty;
+        if (appState.PNInstance != null)
+        {
+            PubnubApi.PNResult<PubnubApi.PNRemoveUuidMetadataResult> result = appState.PNInstance.RemoveUuidMetadata()
+                .Uuid(user.UserId)
+                .ExecuteAsync().Result;
+
+            if (result.Result != null)
+            {
+                msg = "Congratulations! User Deleted Successfully.";
+                await LoadAllUsers();
+            }
+            else if (result.Status != null && result.Status.Error)
+            {
+                System.Diagnostics.Debug.WriteLine((result.Status.ErrorData != null) ? result.Status.ErrorData.Information : "No error data available");
+                msg = "Oops..something wrong..try again";
+            }
+        }
+        else
+        {
+            msg = "Oops....Pubnub Instance not available. Try again.";
+        }
+    }
+
+    async Task HandleUpdateUser(Data.UserMetadata user)
+    {
+        msg = string.Empty;
+        if (appState.PNInstance != null)
+        {
+            PubnubApi.PNResult<PubnubApi.PNSetUuidMetadataResult> result = await appState.PNInstance.SetUuidMetadata()
+                .Uuid(user.UserId)
+                .Name(user.Name)
+                .ExecuteAsync();
+
+            if (result.Result != null && !result.Status.Error)
+            {
+                msg = "Congratulations! User Updated Successfully.";
+            }
+            else if (result.Status != null && result.Status.Error)
+            {
+                System.Diagnostics.Debug.WriteLine((result.Status.ErrorData != null) ? result.Status.ErrorData.Information : "No error data available");
+                msg = "Oops..something wrong..try again";
+            }
+        }
+        else
+        {
+            msg = "Oops....Pubnub Instance not available. Try again.";
+        }
+
+    }
+}
+
